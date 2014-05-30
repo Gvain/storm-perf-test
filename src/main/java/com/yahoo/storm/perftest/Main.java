@@ -77,11 +77,11 @@ public class Main {
   
   @Option(name="--ackers", metaVar="ACKERS", 
       usage="number of acker bolts to launch per topology")
-  private int _ackers = 1;
+  private int _ackers = 0;
   
   @Option(name="--maxSpoutPending", aliases={"--maxPending"}, metaVar="PENDING",
       usage="maximum number of pending messages per spout (only valid if acking is enabled)")
-  private int _maxSpoutPending = -1;
+  private int _maxSpoutPending = 1000;
   
   @Option(name="--name", aliases={"--topologyName"}, metaVar="NAME",
       usage="base name of the topology (numbers may be appended to the end)")
@@ -92,21 +92,22 @@ public class Main {
   
   @Option(name="--pollFreqSec", aliases={"--pollFreq"}, metaVar="POLL",
       usage="How often should metrics be collected")
-  private int _pollFreqSec = 30;
+  private int _pollFreqSec = 4;
   
   @Option(name="--testTimeSec", aliases={"--testTime"}, metaVar="TIME",
       usage="How long should the benchmark run for.")
-  private int _testRunTimeSec = 5 * 60;
+  private int _testRunTimeSec = 2 * 60;
 
   private static class MetricsState {
     long transferred = 0;
-    int slotsUsed = 0;
     long lastTime = 0;
+    int slotsUsed = 0;
+    double lastThroughput = 0.00;
   }
 
 
-  public void metrics(Nimbus.Client client, int size, int poll, int total) throws Exception {
-    System.out.println("status\ttopologies\ttotalSlots\tslotsUsed\ttotalExecutors\texecutorsWithMetrics\ttime\ttime-diff ms\ttransferred\tthroughput (MB/s)");
+  public void metrics(Nimbus.Client client, int poll, int total) throws Exception {
+    System.out.println("status\ttopologies\ttotalSlots\tslotsUsed\ttotalExecutors\texecutorsWithMetrics\ttime\ttime-diff ms\ttransferred\tthroughput (Kp/s)");
     MetricsState state = new MetricsState();
     long pollMs = poll * 1000;
     long now = System.currentTimeMillis();
@@ -115,7 +116,7 @@ public class Main {
     long cycle = 0;
     long sleepTime;
     long wakeupTime;
-    while (metrics(client, size, now, state, "WAITING")) {
+    while (metrics(client, now, state, "WAITING")) {
       now = System.currentTimeMillis();
       cycle = (now - startTime)/pollMs;
       wakeupTime = startTime + (pollMs * (cycle + 1));
@@ -135,8 +136,12 @@ public class Main {
     }
     now = System.currentTimeMillis();
     long end = now + (total * 1000);
+    double sumThroughput = 0;
+    int nPolls = 0;
     do {
-      metrics(client, size, now, state, "RUNNING");
+      metrics(client, now, state, "RUNNING");
+      sumThroughput += state.lastThroughput;
+      nPolls ++;
       now = System.currentTimeMillis();
       cycle = (now - startTime)/pollMs;
       wakeupTime = startTime + (pollMs * (cycle + 1));
@@ -146,13 +151,12 @@ public class Main {
       }
       now = System.currentTimeMillis();
     } while (now < end);
+    double avgThroughput = sumThroughput / nPolls;
+    System.out.println("RUNNING " + nPolls + " Polls, AVG_Throughput = " + avgThroughput + " Kp/s");
   }
 
-  public boolean metrics(Nimbus.Client client, int size, long now, MetricsState state, String message) throws Exception {
+  public boolean metrics(Nimbus.Client client, long now, MetricsState state, String message) throws Exception {
     ClusterSummary summary = client.getClusterInfo();
-    long time = now - state.lastTime;
-    state.lastTime = now;
-    int numSupervisors = summary.get_supervisors_size();
     int totalSlots = 0;
     int totalUsedSlots = 0;
     for (SupervisorSummary sup: summary.get_supervisors()) {
@@ -180,7 +184,7 @@ public class Main {
               executorsWithMetrics++;
               //The SOL messages are always on the default stream, so just count those
               Long dflt = e2.get("default");
-              if (dflt != null) {
+              if (dflt != null && "messageSpout".equals(es.get_component_id())) {
                 totalTransferred += dflt;
               }
             }
@@ -190,11 +194,12 @@ public class Main {
     }
     long transferredDiff = totalTransferred - state.transferred;
     state.transferred = totalTransferred;
-    double throughput = (transferredDiff == 0 || time == 0) ? 0.0 : (transferredDiff * size)/(1024.0 * 1024.0)/(time/1000.0);
+    long time = now - state.lastTime;
+    state.lastTime = now;
+    double throughput = (transferredDiff == 0 || time == 0) ? 0.0 : ((double)transferredDiff)/((double)time);
+    state.lastThroughput = throughput;
     System.out.println(message+"\t"+numTopologies+"\t"+totalSlots+"\t"+totalUsedSlots+"\t"+totalExecutors+"\t"+executorsWithMetrics+"\t"+now+"\t"+time+"\t"+transferredDiff+"\t"+throughput);
-    if ("WAITING".equals(message)) {
-      //System.err.println(" !("+totalUsedSlots+" > 0 && "+slotsUsedDiff+" == 0 && "+totalExecutors+" > 0 && "+executorsWithMetrics+" >= "+totalExecutors+")");
-    }
+
     return !(totalUsedSlots > 0 && slotsUsedDiff == 0 && totalExecutors > 0 && executorsWithMetrics >= totalExecutors);
   } 
 
@@ -256,7 +261,7 @@ public class Main {
 
         StormSubmitter.submitTopology(_name+"_"+topoNum, conf, builder.createTopology());
       }
-      metrics(client, _messageSize, _pollFreqSec, _testRunTimeSec);
+      metrics(client, _pollFreqSec, _testRunTimeSec);
     } finally {
       //Kill it right now!!!
       KillOptions killOpts = new KillOptions();
