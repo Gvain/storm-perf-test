@@ -243,11 +243,11 @@ public class Main {
         builder.setSpout("messageSpout", 
             new SOLSpout(_messageSize, _ackEnabled), _spoutParallel);
         LOG.info("Adding in "+_boltParallel+" bolts");
-        builder.setBolt("messageBolt1", new SOLBolt(), _boltParallel)
+        builder.setBolt("messageBolt1", new SleepyBolt(), _boltParallel)
             .shuffleGrouping("messageSpout");
         for (int levelNum = 2; levelNum <= _numLevels; levelNum++) {
           LOG.info("Adding in "+_boltParallel+" bolts at level "+levelNum);
-          builder.setBolt("messageBolt"+levelNum, new SOLBolt(), _boltParallel)
+          builder.setBolt("messageBolt"+levelNum, new SleepyBolt(), _boltParallel)
               .shuffleGrouping("messageBolt"+(levelNum - 1));
         }
 
