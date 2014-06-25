@@ -18,6 +18,7 @@ package com.yahoo.storm.perftest;
 
 import java.util.Map;
 
+import backtype.storm.generated.*;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.kohsuke.args4j.CmdLineException;
@@ -25,19 +26,12 @@ import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
 import backtype.storm.Config;
-import backtype.storm.LocalCluster;
 import backtype.storm.StormSubmitter;
 import backtype.storm.topology.TopologyBuilder;
 import backtype.storm.utils.Utils;
 import backtype.storm.utils.NimbusClient;
-import backtype.storm.generated.Nimbus;
-import backtype.storm.generated.KillOptions;
-import backtype.storm.generated.ClusterSummary;
-import backtype.storm.generated.SupervisorSummary;
-import backtype.storm.generated.TopologySummary;
-import backtype.storm.generated.TopologyInfo;
-import backtype.storm.generated.ExecutorSummary;
-import backtype.storm.generated.ExecutorStats;
+import backtype.storm.generated.TaskSummary;
+import backtype.storm.generated.TaskStats;
 
 public class Main {
   private static final Log LOG = LogFactory.getLog(Main.class);
@@ -107,7 +101,7 @@ public class Main {
 
 
   public void metrics(Nimbus.Client client, int poll, int total) throws Exception {
-    System.out.println("status\ttopologies\ttotalSlots\tslotsUsed\ttotalExecutors\texecutorsWithMetrics\ttime\ttime-diff ms\ttransferred\tthroughput (Kp/s)");
+    System.out.println("status\ttopologies\ttotalSlots\tslotsUsed\ttargetTasks\ttargetTasksWithMetrics\ttime\ttime-diff ms\temitted\tthroughput (Kp/s)");
     MetricsState state = new MetricsState();
     long pollMs = poll * 1000;
     long now = System.currentTimeMillis();
@@ -168,27 +162,29 @@ public class Main {
 
     int numTopologies = summary.get_topologies_size();
     long totalTransferred = 0;
-    int totalExecutors = 0;
-    int executorsWithMetrics = 0;
+    int targetTasks = 0;
+    int targetTasksWithMetrics = 0;
     for (TopologySummary ts: summary.get_topologies()) {
       String id = ts.get_id();
       TopologyInfo info = client.getTopologyInfo(id);
-      for (ExecutorSummary es: info.get_executors()) {
-        ExecutorStats stats = es.get_stats();
-        totalExecutors++;
-        if (stats != null) {
-          Map<String,Map<String,Long>> transferred = stats.get_transferred();
-          if ( transferred != null) {
-            Map<String, Long> e2 = transferred.get(":all-time");
-            if (e2 != null) {
-              executorsWithMetrics++;
-              //The SOL messages are always on the default stream, so just count those
-              Long dflt = e2.get("default");
-              if (dflt != null && "messageSpout".equals(es.get_component_id())) {
-                totalTransferred += dflt;
-              }
+      for (TaskSummary taskSummary: info.get_tasks()) {
+        if ("messageSpout".equals(taskSummary.get_component_id())) {
+            targetTasks++;
+            TaskStats stats = taskSummary.get_stats();
+            if (stats != null) {
+                Map<String,Map<String,Long>> emitted = stats.get_emitted();
+                if ( emitted != null) {
+                    Map<String, Long> e2 = emitted.get("All-time");
+                    if (e2 != null && !e2.isEmpty()) {
+                        targetTasksWithMetrics++;
+                        //The SOL messages are always on the default stream, so just count those
+                        Long dflt = e2.get("default");
+                        if (dflt != null) {
+                            totalTransferred += dflt;
+                        }
+                    }
+                }
             }
-          }
         }
       }
     }
@@ -198,9 +194,9 @@ public class Main {
     state.lastTime = now;
     double throughput = (transferredDiff == 0 || time == 0) ? 0.0 : ((double)transferredDiff)/((double)time);
     state.lastThroughput = throughput;
-    System.out.println(message+"\t"+numTopologies+"\t"+totalSlots+"\t"+totalUsedSlots+"\t"+totalExecutors+"\t"+executorsWithMetrics+"\t"+now+"\t"+time+"\t"+transferredDiff+"\t"+throughput);
+    System.out.println(message+"\t"+numTopologies+"\t"+totalSlots+"\t"+totalUsedSlots+"\t"+targetTasks+"\t"+targetTasksWithMetrics+"\t"+now+"\t"+time+"\t"+transferredDiff+"\t"+throughput);
 
-    return !(totalUsedSlots > 0 && slotsUsedDiff == 0 && totalExecutors > 0 && executorsWithMetrics >= totalExecutors);
+    return !(totalUsedSlots > 0 && slotsUsedDiff == 0 && targetTasks > 0 && targetTasksWithMetrics >= targetTasks);
   } 
 
  
