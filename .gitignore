@@ -9,3 +9,8 @@
 Session.vim
 .netrwhist
 *~
+.idea
+.idea/*
+target
+target/*
+*.iml
