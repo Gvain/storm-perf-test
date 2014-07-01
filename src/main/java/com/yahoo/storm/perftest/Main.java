@@ -261,7 +261,7 @@ public class Main {
     } finally {
       //Kill it right now!!!
       KillOptions killOpts = new KillOptions();
-      killOpts.set_wait_secs(0);
+      killOpts.set_wait_secs(1);
 
       for (int topoNum = 0; topoNum < _numTopologies; topoNum++) {
         LOG.info("KILLING "+_name+"_"+topoNum);
